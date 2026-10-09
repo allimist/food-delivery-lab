@@ -5,7 +5,7 @@
   --accent:#0f7b4f;--accent-ink:#ffffff;
   --good-bg:#d9f5e3;--good:#116b32;--bad-bg:#fde2e2;--bad:#8a1f1f;--live-bg:#e3f0ff;--live:#0b4a8f;--warn:#8a5a00;
   /* chart / map slots (dataviz reference palette, first three categorical slots) */
-  --map-bg:#fcfcfb;--map-grid:#eceee9;--river:#cfe3f5;
+  --map-bg:#fcfcfb;--tile-filter:saturate(.55) contrast(.92) brightness(1.03);
   --series-1:#2a78d6;--series-2:#eb6834;--series-3:#1baf7a;--ink:#0b0b0b;
 }
 @media (prefers-color-scheme:dark){
@@ -15,7 +15,7 @@
     --text:#f2f2ee;--text-2:#c3c2b7;--muted:#97968c;
     --accent:#22a06b;--accent-ink:#0b0b0b;
     --good-bg:#183d27;--good:#8fe0ad;--bad-bg:#4a1f1f;--bad:#f3a5a5;--live-bg:#1b3150;--live:#a9cdf5;--warn:#f0c674;
-    --map-bg:#1a1a19;--map-grid:#2a2b28;--river:#1f3447;
+    --map-bg:#1a1a19;--tile-filter:invert(1) hue-rotate(180deg) saturate(.45) brightness(.9) contrast(.85);
     --series-1:#3987e5;--series-2:#d95926;--series-3:#199e70;--ink:#ffffff;
   }
 }
@@ -25,7 +25,7 @@
   --text:#f2f2ee;--text-2:#c3c2b7;--muted:#97968c;
   --accent:#22a06b;--accent-ink:#0b0b0b;
   --good-bg:#183d27;--good:#8fe0ad;--bad-bg:#4a1f1f;--bad:#f3a5a5;--live-bg:#1b3150;--live:#a9cdf5;--warn:#f0c674;
-  --map-bg:#1a1a19;--map-grid:#2a2b28;--river:#1f3447;
+  --map-bg:#1a1a19;--tile-filter:invert(1) hue-rotate(180deg) saturate(.45) brightness(.9) contrast(.85);
   --series-1:#3987e5;--series-2:#d95926;--series-3:#199e70;--ink:#ffffff;
 }
 
@@ -98,16 +98,26 @@ table.clickable tbody tr{cursor:pointer}table.clickable tbody tr:hover{backgroun
 .steps li.failed{color:var(--bad)}.steps li.failed::before{background:var(--bad);border-color:var(--bad)}
 .steps small{color:var(--text-2);font-variant-numeric:tabular-nums}.steps .muted{font-size:12px}
 
-.map{margin:0}.map svg{width:100%;height:auto;display:block;border-radius:8px}
-.map-bg{fill:var(--map-bg)}.map-grid{stroke:var(--map-grid)}
-.river{fill:none;stroke:var(--river);stroke-linecap:round;stroke-linejoin:round}
-.map-note{font-size:11px;fill:var(--muted);font-style:italic}
-.map-label{font-size:11px;fill:var(--text-2);paint-order:stroke;stroke:var(--map-bg);stroke-width:3px}
-.rest{fill:var(--ink);stroke:var(--map-bg)}
-.courier{fill:var(--series-1);stroke:var(--map-bg);transition:cx 1s linear,cy 1s linear}
-.courier.busy{fill:var(--series-2)}
-.drop{fill:var(--series-3);stroke:var(--map-bg)}
-.route{stroke:var(--muted);stroke-dasharray:4 4;opacity:.7}
+.map{margin:0}
+.map-canvas{height:480px;border-radius:8px;background:var(--map-bg);z-index:0;font:inherit}
+.map-canvas.fit{height:340px}
+/* OSM tiles, toned down so the data marks stand out; in dark mode inverted with hues kept */
+.map-canvas .leaflet-tile-pane{filter:var(--tile-filter)}
+@media (max-width:640px){.map-canvas{height:360px}}
+.leaflet-container a{color:var(--series-1)}
+.leaflet-bar a,.leaflet-bar a:hover{background:var(--surface);color:var(--text);border-color:var(--border)}
+.leaflet-bar a.leaflet-disabled{background:var(--surface-2);color:var(--muted)}
+.map-reset{font-size:16px}
+.leaflet-control-attribution{background:color-mix(in srgb,var(--surface) 80%,transparent)!important;color:var(--text-2)}
+.leaflet-tooltip{background:var(--surface);color:var(--text);border-color:var(--border);font-size:12px}
+.leaflet-tooltip.map-tip{background:none;border:0;box-shadow:none;padding:0 2px;color:var(--text-2);font-size:11px;font-weight:600;
+  text-shadow:0 0 3px var(--map-bg),0 0 3px var(--map-bg),0 0 2px var(--map-bg)}
+.leaflet-tooltip.map-tip::before{display:none}
+.rest-icon{background:var(--ink);border:2px solid var(--map-bg);border-radius:3px}
+path.courier{fill:var(--series-1);stroke:var(--map-bg)}
+path.courier.busy{fill:var(--series-2)}
+path.drop{fill:var(--series-3);stroke:var(--map-bg)}
+path.route{stroke:var(--text);opacity:.6}
 .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-2);margin-top:8px}
 .legend .sw{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;vertical-align:-1px}
 .sw.rest{background:var(--ink);border-radius:2px}.sw.free{background:var(--series-1)}.sw.busy{background:var(--series-2)}.sw.drop{background:var(--series-3)}

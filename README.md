@@ -8,7 +8,7 @@
 ![Runs on](https://img.shields.io/badge/runs%20on-Docker%20%7C%20Podman-892ca0)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![Live map during a load test: 60 orders, 25 couriers, routes from restaurants to drop-offs](docs/live-map.jpg)
+![Live map on OpenStreetMap during a load test: 60 orders, 25 couriers, routes from restaurants to drop-offs](docs/live-map.jpg)
 
 A hands-on learning project that rebuilds the core of a food delivery app (think DoorDash / Grab Food / LINE MAN) for central **Bangkok**. It is small enough to read in an afternoon but keeps the hard parts:
 
@@ -18,6 +18,7 @@ A hands-on learning project that rebuilds the core of a food delivery app (think
 - **idempotent checkout** (a double click makes one order)
 - an **ETA** that learns each kitchen's real prep time
 - a **load simulator** with 40 simulated couriers riding through the public API, which shows where the time goes
+- a **live map** on real Bangkok streets (Leaflet + OpenStreetMap tiles, no API key): zoom from the whole region down to a street, and the order tracker follows its courier
 
 It is the sister project of [hotel-booking-lab](https://github.com/allimist/hotel-booking-lab) and [flight-booking-lab](https://github.com/allimist/flight-booking-lab), with the same stack and conventions. Everything runs locally with Docker Compose or Podman Compose. Nothing is production-ready on purpose: passwords are plain text and shown on the login page so anyone can try every role.
 
@@ -37,7 +38,7 @@ open http://localhost:5175          # web
 | PostgreSQL | localhost:5436 (user/db/password `food`) | source of truth |
 | Redis | localhost:6381 | courier positions, free-courier set, prep-time averages |
 
-Ports are offset from the other labs, so all of them can run side by side.
+Ports are offset from the other labs, so all of them can run side by side. The map loads its tiles from OpenStreetMap, so it needs internet; everything else runs offline.
 
 **Time runs 20× faster** (`TIME_SCALE`): a 15-minute prep takes 45 seconds and a courier at 25 km/h crosses 3 km in about 22 seconds. One order goes from checkout to the door in about a minute.
 
@@ -143,14 +144,14 @@ apps/api/src/
   sim.ts         load simulator and the Redis/PostgreSQL consistency check
   ctx.ts         clients, settings, helpers
 apps/courier-sim/src/worker.ts   40 couriers using the public API like a phone app would
-apps/web/src/main.tsx            React SPA: customer, restaurant, courier, admin, SVG city map
+apps/web/src/main.tsx            React SPA: customer, restaurant, courier, admin, Leaflet map on OpenStreetMap tiles
 database/init.sql                schema + Bangkok seed (8 restaurants, 26 dishes, 52 accounts)
 scripts/smoke.sh                 end-to-end test, run in CI
 ```
 
 ## Not in scope (on purpose)
 
-Real auth (passwords are plain text), a real payment provider, maps or routing (couriers ride in straight lines), batching two orders on one courier, surge pricing, multiple cities.
+Real auth (passwords are plain text), a real payment provider, street routing (couriers ride in straight lines across the map), batching two orders on one courier, surge pricing, multiple cities.
 
 ## License
 

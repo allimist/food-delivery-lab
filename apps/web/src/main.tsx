@@ -1,5 +1,7 @@
 import React,{useCallback,useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import './style.css';
 
 const API=import.meta.env.VITE_API_URL||'http://localhost:3030/api';
@@ -55,43 +57,64 @@ function Tile({label,value,hint}:{label:string,value:any,hint?:any}){
   return <div className="tile"><div className="tile-label">{label}</div><div className="tile-value">{value}</div>{hint&&<div className="tile-hint">{hint}</div>}</div>;
 }
 
-// ---- City map: inline SVG over central Bangkok (no map tiles, no key) ------------------------------------------------
-const B={lat0:13.69,lat1:13.82,lon0:100.47,lon1:100.62},W=700,H=Math.round(W*(B.lat1-B.lat0)/((B.lon1-B.lon0)*Math.cos(13.75*Math.PI/180)));
-const px=(lat:number,lon:number)=>[(lon-B.lon0)/(B.lon1-B.lon0)*W,(B.lat1-lat)/(B.lat1-B.lat0)*H];
-const RIVER=[[13.82,100.502],[13.79,100.497],[13.765,100.492],[13.75,100.491],[13.735,100.5],[13.722,100.511],[13.708,100.52],[13.70,100.536],[13.69,100.55]];
+// ---- City map: Leaflet on OpenStreetMap tiles (no API key; dark mode darkens them with a CSS filter) -------------------------------------
+const CITY:L.LatLngBoundsExpression=[[13.70,100.49],[13.80,100.61]];
+const TILES='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const ATTRIBUTION='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 type MapProps={restaurants:any[],couriers?:any[],orders?:any[],drops?:{lat:number,lon:number,label:string}[],fit?:boolean};
-/** fit: zoom to the points shown (order tracker, courier screen); otherwise the whole city. Marker sizes stay constant. */
+/** fit: frame the points shown (order tracker, courier screen) and follow them as the courier moves, until the user
+ *  pans or zooms; the ⟲ button frames them again. Otherwise the whole city. Couriers are moved, not redrawn. */
 function CityMap({restaurants,couriers=[],orders=[],drops=[],fit}:MapProps){
-  let vb=[0,0,W,H];
-  const pts=[...restaurants,...couriers,...drops].filter(p=>Number.isFinite(p.lat)).map(p=>px(p.lat,p.lon));
-  if(fit&&pts.length){
-    const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
-    // room on the right for labels
-    let w=Math.max(...xs)-Math.min(...xs)+260,h=Math.max(...ys)-Math.min(...ys)+120;
-    w=Math.max(w,h*W/H,280);h=w*H/W;
-    vb=[(Math.max(...xs)+Math.min(...xs))/2-w/2+70,(Math.max(...ys)+Math.min(...ys))/2-h/2,w,h];
-  }
-  const k=vb[2]/W*1.4,font={fontSize:11*k,strokeWidth:3*k};
-  const grid=[];for(let lon=100.48;lon<B.lon1;lon+=0.02)grid.push(<line key={'x'+lon} className="map-grid" style={{strokeWidth:k}} x1={px(0,lon)[0]} x2={px(0,lon)[0]} y1={0} y2={H}/>);
-  for(let lat=13.70;lat<B.lat1;lat+=0.02)grid.push(<line key={'y'+lat} className="map-grid" style={{strokeWidth:k}} y1={px(lat,0)[1]} y2={px(lat,0)[1]} x1={0} x2={W}/>);
-  const ring={strokeWidth:2*k};
+  const box=useRef<HTMLDivElement>(null);
+  const st=useRef<{map:L.Map,shapes:L.LayerGroup,couriers:Map<string,L.CircleMarker>,follow:boolean,auto:boolean,key:string}|null>(null);
+  const pts=useRef<[number,number][]>([]);
+  pts.current=[...restaurants,...couriers,...drops].filter(p=>Number.isFinite(p.lat)).map(p=>[p.lat,p.lon]);
+  const frame=()=>{const s=st.current;if(!s)return;s.auto=true;
+    if(fit&&pts.current.length)s.map.fitBounds(L.latLngBounds(pts.current),{paddingTopLeft:[40,40],paddingBottomRight:[170,40],maxZoom:16,animate:false});
+    else s.map.fitBounds(CITY,{animate:false});
+    s.auto=false};
+  useEffect(()=>{
+    const map=L.map(box.current!,{minZoom:8,maxZoom:18,zoomSnap:0.5,wheelPxPerZoomLevel:90});
+    L.tileLayer(TILES,{attribution:ATTRIBUTION,maxZoom:19}).addTo(map);
+    map.createPane('couriers').style.zIndex='450';  // above routes and drop-offs (overlay pane, 400), below restaurant icons
+    const s:NonNullable<typeof st.current>={map,shapes:L.layerGroup().addTo(map),couriers:new Map(),follow:true,auto:false,key:''};st.current=s;
+    const Reset=L.Control.extend({onAdd(){const b=L.DomUtil.create('a','map-reset');b.href='#';b.innerHTML='⟲';b.title=fit?'Frame the order again':'Whole city';
+      b.setAttribute('role','button');b.setAttribute('aria-label',b.title);
+      L.DomEvent.on(b,'click',e=>{L.DomEvent.stop(e);s.follow=true;frame()});const bar=L.DomUtil.create('div','leaflet-bar');bar.appendChild(b);return bar}});
+    new Reset({position:'topleft'}).addTo(map);
+    map.on('dragstart',()=>{s.follow=false});map.on('zoomstart',()=>{if(!s.auto)s.follow=false});
+    frame();
+    return()=>{map.remove();st.current=null};
+  },[]);
+  useEffect(()=>{const s=st.current;if(!s)return;
+    // restaurants, routes and drop-offs change rarely: rebuild them only when they do
+    const key=JSON.stringify([restaurants.map(r=>r.id),orders.map(o=>[o.id,o.status]),drops]);
+    if(key!==s.key){s.key=key;s.shapes.clearLayers();
+      for(const o of orders){L.polyline([[o.restLat,o.restLon],[o.dropLat,o.dropLon]],{className:"route",weight:2,dashArray:"5 5",interactive:false}).addTo(s.shapes);
+        L.circleMarker([o.dropLat,o.dropLon],{className:'drop',radius:5,weight:2,fillOpacity:1}).bindTooltip(`Drop-off · ${LABEL[o.status]}`).addTo(s.shapes)}
+      for(const d of drops)L.circleMarker([d.lat,d.lon],{className:'drop',radius:7,weight:2,fillOpacity:1})
+        .bindTooltip(d.label,{permanent:true,direction:'right',offset:[8,0],className:'map-tip'}).addTo(s.shapes);
+      for(const r of restaurants)L.marker([r.lat,r.lon],{icon:L.divIcon({className:'rest-icon',iconSize:[12,12]}),keyboard:false})
+        .bindTooltip(r.name,{permanent:true,direction:'right',offset:[8,0],className:'map-tip'}).addTo(s.shapes);
+    }
+    const seen=new Set<string>();
+    for(const c of couriers){if(!Number.isFinite(c.lat))continue;seen.add(c.id);const busy=!!c.orderId;
+      const tip=`${c.name||'Courier '+String(c.id).slice(0,6)} · ${busy?'carrying order '+String(c.orderId).slice(0,8):'free'}`;
+      let mk=s.couriers.get(c.id);
+      if(!mk){mk=L.circleMarker([c.lat,c.lon],{pane:'couriers',className:'courier',radius:6,weight:2,fillOpacity:1}).addTo(s.map);
+        if(fit&&c.name)mk.bindTooltip(c.name,{permanent:true,direction:'top',offset:[0,-6],className:'map-tip'});else mk.bindTooltip(tip);
+        s.couriers.set(c.id,mk)}
+      else{mk.setLatLng([c.lat,c.lon]);if(!(fit&&c.name))mk.setTooltipContent(tip)}
+      mk.setRadius(busy?7:6);mk.getElement()?.classList.toggle('busy',busy);
+    }
+    for(const [id,mk] of s.couriers)if(!seen.has(id)){mk.remove();s.couriers.delete(id)}
+    if(fit&&s.follow)frame();
+  });
   return <figure className="map">
-    <svg viewBox={vb.join(' ')} role="img" aria-label="Map of central Bangkok with restaurants, couriers and deliveries">
-      <rect x={-W} y={-H} width={3*W} height={3*H} className="map-bg"/>{grid}
-      <polyline className="river" style={{strokeWidth:Math.max(10*k,4)}} points={RIVER.map(([a,b])=>px(a,b).join(',')).join(' ')}/>
-      {!fit&&<text className="map-note" x={px(13.775,100.4935)[0]-6} y={px(13.775,100.4935)[1]} textAnchor="end">Chao Phraya</text>}
-      {orders.map(o=>{const [x1,y1]=px(o.restLat,o.restLon),[x2,y2]=px(o.dropLat,o.dropLon);
-        return <g key={o.id}><line className="route" style={{strokeWidth:1.5*k}} x1={x1} y1={y1} x2={x2} y2={y2}/><circle className="drop" style={ring} cx={x2} cy={y2} r={5*k}><title>{`Drop-off · ${LABEL[o.status]}`}</title></circle></g>})}
-      {drops.map((d,i)=>{const [x,y]=px(d.lat,d.lon);return <g key={i}><circle className="drop" style={ring} cx={x} cy={y} r={7*k}/><text className="map-label" style={font} x={x+10*k} y={y+4*k}>{d.label}</text></g>})}
-      {restaurants.map(r=>{const [x,y]=px(r.lat,r.lon);return <g key={r.id}><rect className="rest" style={ring} x={x-6*k} y={y-6*k} width={12*k} height={12*k} rx={2*k}/>
-        <text className="map-label" style={font} x={x+10*k} y={y+4*k}>{r.name}</text><title>{r.name}</title></g>})}
-      {couriers.map(c=>{const [x,y]=px(c.lat,c.lon),busy=!!c.orderId;
-        return <g key={c.id}><circle className={busy?'courier busy':'courier'} style={ring} cx={x} cy={y} r={(busy?6:5)*k}/><circle cx={x} cy={y} r={12*k} fill="transparent">
-          <title>{`${c.name||'Courier '+c.id.slice(0,6)} · ${busy?'carrying order '+c.orderId.slice(0,8):'free'}`}</title></circle>
-          {fit&&c.name&&<text className="map-label" style={font} x={x+10*k} y={y-8*k}>{c.name}</text>}</g>})}
-    </svg>
+    <div ref={box} className={fit?'map-canvas fit':'map-canvas'} role="img" aria-label="Map of central Bangkok with restaurants, couriers and deliveries"/>
     <figcaption className="legend">
       <span><i className="sw rest"/>Restaurant</span><span><i className="sw free"/>Free courier</span><span><i className="sw busy"/>Courier with an order</span><span><i className="sw drop"/>Drop-off</span>
+      <span className="muted">Scroll or pinch to zoom, drag to move, ⟲ to {fit?'frame the order':'see the whole city'}</span>
     </figcaption>
   </figure>;
 }
