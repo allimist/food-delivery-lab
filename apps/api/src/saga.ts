@@ -230,6 +230,7 @@ export async function dispatch(o: any, rest: any) {
       return u;
     });
     if (!u) { await couriers.release(claim.courierId, o.id); return false; }   // order moved on (cancelled) meanwhile
+    await couriers.startTrail(o.id, claim.courierId);
     return true;
   } catch (e: any) {
     // 23505 = one_active_order_per_courier said no. Redis was wrong; PostgreSQL wins and the claim is undone.

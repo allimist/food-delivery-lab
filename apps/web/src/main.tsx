@@ -61,14 +61,24 @@ function Tile({label,value,hint}:{label:string,value:any,hint?:any}){
 const CITY:L.LatLngBoundsExpression=[[13.70,100.49],[13.80,100.61]];
 const TILES='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const ATTRIBUTION='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-type MapProps={restaurants:any[],couriers?:any[],orders?:any[],drops?:{lat:number,lon:number,label:string}[],fit?:boolean};
+type LatLon=[number,number];
+/** past: where the courier has been on this order (its trail); ahead: what is left (straight legs, as couriers ride). */
+type Route={past:LatLon[],ahead:LatLon[]};
+type MapProps={restaurants:any[],couriers?:any[],orders?:any[],drops?:{lat:number,lon:number,label:string}[],fit?:boolean,route?:Route|null};
+/** The courier's route for one order: trail so far + its position, then restaurant (if not picked up yet) and drop-off. */
+function courierRoute(o:any,pos:{lat:number,lon:number}|null|undefined):Route|null{
+  const past:LatLon[]=[...(o.trail||[])],here:LatLon|null=pos&&Number.isFinite(pos.lat)?[pos.lat,pos.lon]:null;
+  if(here)past.push(here);
+  const ahead:LatLon[]=!here?[]:o.status==='COURIER_ASSIGNED'?[here,[o.restLat,o.restLon],[o.dropLat,o.dropLon]]:o.status==='PICKED_UP'?[here,[o.dropLat,o.dropLon]]:[];
+  return past.length>1||ahead.length?{past,ahead}:null;
+}
 /** fit: frame the points shown (order tracker, courier screen) and follow them as the courier moves, until the user
  *  pans or zooms; the ⟲ button frames them again. Otherwise the whole city. Couriers are moved, not redrawn. */
-function CityMap({restaurants,couriers=[],orders=[],drops=[],fit}:MapProps){
+function CityMap({restaurants,couriers=[],orders=[],drops=[],fit,route}:MapProps){
   const box=useRef<HTMLDivElement>(null);
-  const st=useRef<{map:L.Map,shapes:L.LayerGroup,couriers:Map<string,L.CircleMarker>,follow:boolean,auto:boolean,key:string}|null>(null);
+  const st=useRef<{map:L.Map,shapes:L.LayerGroup,couriers:Map<string,L.CircleMarker>,follow:boolean,auto:boolean,key:string,past:L.Polyline,ahead:L.Polyline}|null>(null);
   const pts=useRef<[number,number][]>([]);
-  pts.current=[...restaurants,...couriers,...drops].filter(p=>Number.isFinite(p.lat)).map(p=>[p.lat,p.lon]);
+  pts.current=[...[...restaurants,...couriers,...drops].filter(p=>Number.isFinite(p.lat)).map(p=>[p.lat,p.lon] as LatLon),...(route?.past||[])];
   const frame=()=>{const s=st.current;if(!s)return;s.auto=true;
     if(fit&&pts.current.length)s.map.fitBounds(L.latLngBounds(pts.current),{paddingTopLeft:[40,40],paddingBottomRight:[170,40],maxZoom:16,animate:false});
     else s.map.fitBounds(CITY,{animate:false});
@@ -76,8 +86,11 @@ function CityMap({restaurants,couriers=[],orders=[],drops=[],fit}:MapProps){
   useEffect(()=>{
     const map=L.map(box.current!,{minZoom:8,maxZoom:18,zoomSnap:0.5,wheelPxPerZoomLevel:90});
     L.tileLayer(TILES,{attribution:ATTRIBUTION,maxZoom:19}).addTo(map);
+    map.createPane('route').style.zIndex='420';     // the courier's route, above routes and drop-offs
     map.createPane('couriers').style.zIndex='450';  // above routes and drop-offs (overlay pane, 400), below restaurant icons
-    const s:NonNullable<typeof st.current>={map,shapes:L.layerGroup().addTo(map),couriers:new Map(),follow:true,auto:false,key:''};st.current=s;
+    const s:NonNullable<typeof st.current>={map,shapes:L.layerGroup().addTo(map),couriers:new Map(),follow:true,auto:false,key:'',
+      past:L.polyline([],{pane:'route',className:'route-past',weight:5,lineCap:'round',lineJoin:'round',interactive:false}).addTo(map),
+      ahead:L.polyline([],{pane:'route',className:'route-ahead',weight:5,dashArray:'8 8',lineCap:'round',lineJoin:'round',interactive:false}).addTo(map)};st.current=s;
     const Reset=L.Control.extend({onAdd(){const b=L.DomUtil.create('a','map-reset');b.href='#';b.innerHTML='⟲';b.title=fit?'Frame the order again':'Whole city';
       b.setAttribute('role','button');b.setAttribute('aria-label',b.title);
       L.DomEvent.on(b,'click',e=>{L.DomEvent.stop(e);s.follow=true;frame()});const bar=L.DomUtil.create('div','leaflet-bar');bar.appendChild(b);return bar}});
@@ -108,12 +121,14 @@ function CityMap({restaurants,couriers=[],orders=[],drops=[],fit}:MapProps){
       mk.setRadius(busy?7:6);mk.getElement()?.classList.toggle('busy',busy);
     }
     for(const [id,mk] of s.couriers)if(!seen.has(id)){mk.remove();s.couriers.delete(id)}
+    s.past.setLatLngs(route?.past||[]);s.ahead.setLatLngs(route?.ahead||[]);
     if(fit&&s.follow)frame();
   });
   return <figure className="map">
     <div ref={box} className={fit?'map-canvas fit':'map-canvas'} role="img" aria-label="Map of central Bangkok with restaurants, couriers and deliveries"/>
     <figcaption className="legend">
       <span><i className="sw rest"/>Restaurant</span><span><i className="sw free"/>Free courier</span><span><i className="sw busy"/>Courier with an order</span><span><i className="sw drop"/>Drop-off</span>
+      {route&&<><span><i className="ln past"/>Courier's route so far</span><span><i className="ln ahead"/>Still to ride</span></>}
       <span className="muted">Scroll or pinch to zoom, drag to move, ⟲ to {fit?'frame the order':'see the whole city'}</span>
     </figcaption>
   </figure>;
@@ -153,7 +168,7 @@ function Tracker({id,onClose,note}:{id:string,onClose?:()=>void,note?:string}){
         {FLOW.map(s=>{const d:any=done.get(s);return <li key={s} className={d?'done':''}><b>{LABEL[s]}</b> {d&&<small>{time(d.at)}</small>}{d&&stepNote(d)&&<div className="muted">{stepNote(d)}</div>}</li>})}
         {failed&&<li className="failed"><b>{LABEL[failed.status]}</b> <small>{time(failed.at)}</small><div>{stepNote(failed)}</div></li>}
       </ol>
-      <CityMap fit restaurants={[{id:'r',name:o.restaurant,lat:o.restLat,lon:o.restLon}]} drops={[{lat:o.dropLat,lon:o.dropLon,label:o.address}]}
+      <CityMap fit route={courierRoute(o,o.courierPos)} restaurants={[{id:'r',name:o.restaurant,lat:o.restLat,lon:o.restLon}]} drops={[{lat:o.dropLat,lon:o.dropLon,label:o.address}]}
         couriers={o.courierPos?[{id:o.courierId,name:o.courier,orderId:o.id,...o.courierPos}]:[]}/>
     </div>
     <table><tbody>{o.items.map((i:any)=><tr key={i.name}><td>{i.qty} × {i.name}</td><td className="num">{baht(i.qty*i.unitPrice)}</td></tr>)}
@@ -284,7 +299,7 @@ function Courier(){
           :<><button onClick={()=>goTo(o.dropLat,o.dropLon)}>Ride to the customer</button><button className="primary" onClick={()=>run(()=>api(`/courier/orders/${o.id}/deliver`,{body:{}}))}>Delivered</button></>}</div>
         <p className="muted small">Pick-up and delivery are refused unless you are within 150 m (your position is in Redis GEO).</p></div>}
     </div>
-    {d.position&&<div className="card"><CityMap fit restaurants={o?[{id:'r',name:o.restaurant,lat:o.restLat,lon:o.restLon}]:[]} drops={o?[{lat:o.dropLat,lon:o.dropLon,label:o.address}]:[]}
+    {d.position&&<div className="card"><CityMap fit route={o?courierRoute(o,d.position):null} restaurants={o?[{id:'r',name:o.restaurant,lat:o.restLat,lon:o.restLon}]:[]} drops={o?[{lat:o.dropLat,lon:o.dropLon,label:o.address}]:[]}
       couriers={[{id:'me',name:'You',orderId:o?.id,...d.position}]}/></div>}
   </>;
 }

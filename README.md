@@ -18,7 +18,7 @@ A hands-on learning project that rebuilds the core of a food delivery app (think
 - **idempotent checkout** (a double click makes one order)
 - an **ETA** that learns each kitchen's real prep time
 - a **load simulator** with 40 simulated couriers riding through the public API, which shows where the time goes
-- a **live map** on real Bangkok streets (Leaflet + OpenStreetMap tiles, no API key): zoom from the whole region down to a street, and the order tracker follows its courier
+- a **live map** on real Bangkok streets (Leaflet + OpenStreetMap tiles, no API key): zoom from the whole region down to a street, and the order tracker follows its courier and draws its route: ridden so far in dark green, still to ride in light green
 
 It is the sister project of [hotel-booking-lab](https://github.com/allimist/hotel-booking-lab) and [flight-booking-lab](https://github.com/allimist/flight-booking-lab), with the same stack and conventions. Everything runs locally with Docker Compose or Podman Compose. Nothing is production-ready on purpose: passwords are plain text and shown on the login page so anyone can try every role.
 
@@ -90,6 +90,7 @@ stateDiagram-v2
 couriers:pos      GEO set   last position of every courier
 couriers:free     GEO set   online and carrying nothing; the only set dispatch searches
 courier:order:ID  string    the order a courier carries
+order:trail:ID    list      where the courier has been while carrying the order (for the map only)
 ```
 
 - **Claim** is one Lua script: `GEOSEARCH couriers:free … ASC COUNT 1`, `ZREM` the courier, set its order key. Two orders racing for the same courier run one after the other; the second no longer finds it.

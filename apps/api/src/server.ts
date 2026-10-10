@@ -91,6 +91,7 @@ async function orderDetail(id: string) {
   o.steps = (await pool.query(`SELECT status, detail, at FROM order_steps WHERE order_id=$1 ORDER BY id`, [id])).rows;
   o.payment = (await pool.query(`SELECT status, amount::float FROM payments WHERE order_id=$1`, [id])).rows[0] || null;
   o.courierPos = o.courierId && ['COURIER_ASSIGNED', 'PICKED_UP'].includes(o.status) ? await couriers.position(o.courierId) : null;
+  o.trail = o.courierId ? await couriers.trail(o.id) : [];
   if (!saga.TERMINAL.includes(o.status)) {
     const raw = (await pool.query(`SELECT * FROM orders WHERE id=$1`, [id])).rows[0];
     const rest = (await pool.query(`SELECT * FROM restaurants WHERE id=$1`, [raw.restaurant_id])).rows[0];
@@ -178,6 +179,7 @@ app.get('/api/courier/current', async (req: any) => {
   const o = (await pool.query(`SELECT ${ORDER_COLS}, r.lat AS "restLat", r.lon AS "restLon", r.area AS "restArea" ${ORDER_FROM}
     WHERE o.courier_id=$1 AND o.status IN ('COURIER_ASSIGNED','PICKED_UP')`, [u.id])).rows[0] || null;
   const position = await couriers.position(u.id);
+  if (o) o.trail = await couriers.trail(o.id);
   const delivered = (await pool.query(`SELECT count(*)::int AS n FROM orders WHERE courier_id=$1 AND status='DELIVERED'`, [u.id])).rows[0].n;
   return { ...state, position, order: o, delivered };
 });

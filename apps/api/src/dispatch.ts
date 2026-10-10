@@ -4,6 +4,7 @@
 //   couriers:free     GEO set  online couriers without an order: the only set dispatch searches
 //   couriers:online   SET      who is online
 //   courier:order:ID  STRING   the order a courier is carrying
+//   order:trail:ID    LIST     where the courier has been while carrying that order, "lon,lat" per ping (for the map only)
 //
 // The invariant is "in couriers:free  <=>  online and no courier:order key". Every write that touches more than one
 // of these keys is a Lua script, so it runs as one step and nothing can run in between. The race this prevents: a
@@ -25,9 +26,19 @@ redis.call('SET', ARGV[5] .. id, ARGV[4])
 return {id, hits[1][2]}`;
 
 // Position ping. The courier goes (back) into the free set only if it is online and carries nothing.
+// A courier carrying an order also extends that order's trail (skipping repeats while it waits at the restaurant).
 const PING = `
 redis.call('GEOADD', KEYS[1], ARGV[1], ARGV[2], ARGV[3])
-if redis.call('SISMEMBER', KEYS[3], ARGV[3]) == 1 and redis.call('EXISTS', KEYS[4]) == 0 then
+local order = redis.call('GET', KEYS[4])
+if order then
+  local trail, pt = ARGV[4] .. order, ARGV[1] .. ',' .. ARGV[2]
+  if redis.call('LINDEX', trail, -1) ~= pt then
+    redis.call('RPUSH', trail, pt)
+    redis.call('LTRIM', trail, -2000, -1)
+    redis.call('EXPIRE', trail, 86400)
+  end
+end
+if redis.call('SISMEMBER', KEYS[3], ARGV[3]) == 1 and not order then
   redis.call('GEOADD', KEYS[2], ARGV[1], ARGV[2], ARGV[3])
   return 1
 end
@@ -68,7 +79,17 @@ export async function claimNearest(lat: number, lon: number, radiusKm: number, o
   return res ? { courierId: res[0] as string, distanceKm: Number(res[1]) } : null;
 }
 export async function ping(courierId: string, lat: number, lon: number) {
-  return r.fdPing(POS, FREE, ONLINE, orderKey(courierId), lon, lat, courierId);
+  return r.fdPing(POS, FREE, ONLINE, orderKey(courierId), lon, lat, courierId, TRAIL);
+}
+const TRAIL = 'order:trail:';
+/** Where the courier has been while carrying the order, oldest first. Kept for a day after delivery. */
+export async function trail(orderId: string): Promise<[number, number][]> {
+  return (await redis.lrange(TRAIL + orderId, 0, -1)).map(p => { const [lon, lat] = p.split(',').map(Number); return [lat, lon]; });
+}
+/** Starts the trail where the courier was when it got the order. */
+export async function startTrail(orderId: string, courierId: string) {
+  const p = await position(courierId);
+  if (p) await redis.rpush(TRAIL + orderId, `${p.lon},${p.lat}`);
 }
 export async function goOnline(courierId: string, lat: number, lon: number) {
   await redis.sadd(ONLINE, courierId);
