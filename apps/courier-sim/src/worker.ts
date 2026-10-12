@@ -1,5 +1,6 @@
 // Simulated couriers. Each one is a normal courier account using the public API, like a phone app would:
 // go online, ping its position, ride to the restaurant, pick up (once the food is ready), ride to the customer, deliver.
+// It rides along the streets the API planned for the order (order.plan), and reports the corners it turned.
 // The admin sets how many are online (GET /api/sim/settings); the others finish their order and go offline.
 const API = process.env.API_URL || 'http://localhost:3030/api';
 const COUNT = Number(process.env.SIM_COURIERS || 40);
@@ -7,7 +8,8 @@ const TICK_MS = 1000;
 const IDLE_PING_MS = 3000;
 
 type Pos = { lat: number; lon: number };
-type Courier = { n: number; token?: string; pos: Pos; online: boolean; lastPing: number; busy: boolean; drift: Pos };
+type Leg = { key: string; path: Pos[]; next: number };   // next: index of the point it is riding to
+type Courier = { n: number; token?: string; pos: Pos; online: boolean; lastPing: number; busy: boolean; leg?: Leg };
 
 let cfg = { timeScale: 20, courierKmh: 25, atPlaceKm: 0.15 };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -26,17 +28,27 @@ function km(a: Pos, b: Pos) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
-/** One tick of movement toward the target, at the scaled courier speed. */
-function moveToward(p: Pos, t: Pos): Pos {
-  const step = cfg.courierKmh * cfg.timeScale / 3600 * TICK_MS / 1000;
-  const d = km(p, t);
-  if (d <= step) return { ...t };
-  const f = step / d;
-  return { lat: p.lat + (t.lat - p.lat) * f, lon: p.lon + (t.lon - p.lon) * f };
+/** One tick of riding along the leg, at the scaled courier speed. Returns the corners passed on the way. */
+function ride(c: Courier, leg: Leg): [number, number][] {
+  let budget = cfg.courierKmh * cfg.timeScale / 3600 * TICK_MS / 1000;
+  const corners: [number, number][] = [];
+  while (leg.next < leg.path.length) {
+    const t = leg.path[leg.next], d = km(c.pos, t);
+    if (d > budget) { const f = budget / d; c.pos = { lat: c.pos.lat + (t.lat - c.pos.lat) * f, lon: c.pos.lon + (t.lon - c.pos.lon) * f }; break; }
+    budget -= d; c.pos = { ...t }; leg.next++;
+    if (budget > 0 && leg.next < leg.path.length) corners.push([t.lat, t.lon]);
+  }
+  return corners;
 }
-// Couriers start spread over central Bangkok and drift slowly while waiting.
+/** A new leg starts at the point of the path nearest to the courier (it is usually already there). */
+function startLeg(key: string, plan: [number, number][] | undefined, target: Pos, from: Pos): Leg {
+  const path = plan?.length ? plan.map(([lat, lon]) => ({ lat, lon })) : [target];   // no plan: straight to the target
+  let next = 0;
+  path.forEach((p, i) => { if (km(from, p) < km(from, path[next])) next = i; });
+  return { key, path, next };
+}
+// Couriers start spread over central Bangkok. A free courier waits where its last delivery ended (still pinging).
 const randomStart = (): Pos => ({ lat: 13.725 + Math.random() * 0.07, lon: 100.505 + Math.random() * 0.08 });
-const randomDrift = (): Pos => ({ lat: (Math.random() - 0.5) * 0.0006, lon: (Math.random() - 0.5) * 0.0006 });
 
 async function tick(c: Courier, wantOnline: boolean) {
   if (!c.token) c.token = (await call('/auth/login', undefined, { email: `courier${c.n}@example.com`, password: 'courier123' })).token;
@@ -48,17 +60,17 @@ async function tick(c: Courier, wantOnline: boolean) {
     if (wantOnline && !cur.online) { await call('/courier/online', c.token, c.pos); c.lastPing = Date.now(); return; }
     if (!wantOnline && cur.online) { await call('/courier/offline', c.token, {}); return; }
     if (cur.online && Date.now() - c.lastPing >= IDLE_PING_MS) {
-      c.pos = { lat: c.pos.lat + c.drift.lat, lon: c.pos.lon + c.drift.lon };
-      if (Math.random() < 0.1) c.drift = randomDrift();
       await call('/courier/location', c.token, c.pos); c.lastPing = Date.now();
     }
     return;
   }
 
-  const o = cur.order;
-  const target: Pos = o.status === 'COURIER_ASSIGNED' ? { lat: o.restLat, lon: o.restLon } : { lat: o.dropLat, lon: o.dropLon };
-  c.pos = moveToward(c.pos, target);
-  await call('/courier/location', c.token, c.pos); c.lastPing = Date.now();
+  const o = cur.order, toRestaurant = o.status === 'COURIER_ASSIGNED';
+  const target: Pos = toRestaurant ? { lat: o.restLat, lon: o.restLon } : { lat: o.dropLat, lon: o.dropLon };
+  const key = `${o.id}:${o.status}`;
+  if (c.leg?.key !== key) c.leg = startLeg(key, toRestaurant ? o.plan?.toRestaurant : o.plan?.toCustomer, target, c.pos);
+  const via = ride(c, c.leg);
+  await call('/courier/location', c.token, { ...c.pos, via }); c.lastPing = Date.now();
   if (km(c.pos, target) > cfg.atPlaceKm) return;
   try {
     if (o.status === 'COURIER_ASSIGNED' && o.readyAt) await call(`/courier/orders/${o.id}/pickup`, c.token, {});
@@ -70,7 +82,7 @@ async function main() {
   for (;;) {
     try { cfg = await call('/config'); break; } catch { console.log('waiting for the API...'); await sleep(3000); }
   }
-  const fleet: Courier[] = Array.from({ length: COUNT }, (_, i) => ({ n: i + 1, pos: randomStart(), online: false, lastPing: 0, busy: false, drift: randomDrift() }));
+  const fleet: Courier[] = Array.from({ length: COUNT }, (_, i) => ({ n: i + 1, pos: randomStart(), online: false, lastPing: 0, busy: false }));
   console.log(`courier-sim: ${COUNT} couriers, x${cfg.timeScale} time, ${cfg.courierKmh} km/h`);
   let last = '';
   for (;;) {

@@ -18,6 +18,7 @@ import {
   AUTO_ACCEPT_DELAY_MS, AT_PLACE_KM, ADDRESSES,
 } from './ctx';
 import * as couriers from './dispatch';
+import * as roads from './roads';
 
 export type Status = 'PLACED' | 'PAYMENT_AUTHORIZED' | 'RESTAURANT_ACCEPTED' | 'COURIER_ASSIGNED' | 'PICKED_UP' | 'DELIVERED'
   | 'PAYMENT_FAILED' | 'REJECTED' | 'CANCELLED' | 'CANCELLED_NO_COURIER';
@@ -66,13 +67,14 @@ const payment = {
 
 // ---- ETA ---------------------------------------------------------------------------------------------------------------
 // ETA = when the food can leave the restaurant (later of: food ready, courier there) + the ride to the customer.
+// Rides are measured along the roads (roads.ts), not as the crow flies.
 // Prep time is the restaurant's rolling average of real prep times; it learns as orders are marked ready.
 export async function estimate(o: any, rest: any, now = Date.now()) {
   const speed = kmPerSecond();
-  const ride = haversineKm(rest.lat, rest.lon, o.drop_lat, o.drop_lon) / speed;
+  const ride = roads.roadKm(rest.lat, rest.lon, o.drop_lat, o.drop_lon) / speed;
   if (o.status === 'PICKED_UP' && o.courier_id) {
     const p = await couriers.position(o.courier_id);
-    return new Date(now + (p ? haversineKm(p.lat, p.lon, o.drop_lat, o.drop_lon) / speed : ride) * 1000);
+    return new Date(now + (p ? roads.roadKm(p.lat, p.lon, o.drop_lat, o.drop_lon) / speed : ride) * 1000);
   }
   const prepS = (await couriers.prepAverage(rest.id, Number(rest.base_prep_min))) * 60 / TIME_SCALE;
   const since = o.accepted_at ? (now - ms(o.accepted_at)) / 1000 : -AUTO_ACCEPT_DELAY_MS / 1000;
@@ -80,7 +82,7 @@ export async function estimate(o: any, rest: any, now = Date.now()) {
   let toRestaurant = 2 / speed;   // typical first-mile ride before a courier is known
   if (o.courier_id) {
     const p = await couriers.position(o.courier_id);
-    if (p) toRestaurant = haversineKm(p.lat, p.lon, rest.lat, rest.lon) / speed;
+    if (p) toRestaurant = roads.roadKm(p.lat, p.lon, rest.lat, rest.lon) / speed;
   }
   return new Date(now + (Math.max(prepLeft, toRestaurant) + ride) * 1000);
 }
@@ -231,6 +233,7 @@ export async function dispatch(o: any, rest: any) {
     });
     if (!u) { await couriers.release(claim.courierId, o.id); return false; }   // order moved on (cancelled) meanwhile
     await couriers.startTrail(o.id, claim.courierId);
+    await couriers.plan({ id: o.id, status: 'COURIER_ASSIGNED', courierId: claim.courierId, restLat: rest.lat, restLon: rest.lon, dropLat: o.drop_lat, dropLon: o.drop_lon });
     return true;
   } catch (e: any) {
     // 23505 = one_active_order_per_courier said no. Redis was wrong; PostgreSQL wins and the claim is undone.

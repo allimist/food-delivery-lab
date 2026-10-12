@@ -62,14 +62,29 @@ const CITY:L.LatLngBoundsExpression=[[13.70,100.49],[13.80,100.61]];
 const TILES='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const ATTRIBUTION='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 type LatLon=[number,number];
-/** past: where the courier has been on this order (its trail); ahead: what is left (straight legs, as couriers ride). */
+/** past: where the courier has been on this order (its trail); ahead: what is left of the streets planned for it. */
 type Route={past:LatLon[],ahead:LatLon[]};
 type MapProps={restaurants:any[],couriers?:any[],orders?:any[],drops?:{lat:number,lon:number,label:string}[],fit?:boolean,route?:Route|null};
-/** The courier's route for one order: trail so far + its position, then restaurant (if not picked up yet) and drop-off. */
+/** What is left of a planned path for a courier at `here`: from here, on from the path segment it is nearest to. */
+function rest(path:LatLon[],here:LatLon):LatLon[]{
+  const cos=Math.cos(here[0]*Math.PI/180);
+  let best=Infinity,k=0;
+  for(let i=0;i+1<path.length;i++){
+    const [a,b]=[path[i],path[i+1]],dx=(b[1]-a[1])*cos,dy=b[0]-a[0],len=dx*dx+dy*dy;
+    const t=len?Math.max(0,Math.min(1,((here[1]-a[1])*cos*dx+(here[0]-a[0])*dy)/len)):0;
+    const d=(a[0]+t*dy-here[0])**2+((a[1]-here[1])*cos+t*dx)**2;
+    if(d<best){best=d;k=i}
+  }
+  return [here,...path.slice(k+1)];
+}
+/** The courier's route for one order: trail so far + its position, then the planned streets to the restaurant (if not
+ *  picked up yet) and to the customer. Without a plan, straight lines. */
 function courierRoute(o:any,pos:{lat:number,lon:number}|null|undefined):Route|null{
   const past:LatLon[]=[...(o.trail||[])],here:LatLon|null=pos&&Number.isFinite(pos.lat)?[pos.lat,pos.lon]:null;
   if(here)past.push(here);
-  const ahead:LatLon[]=!here?[]:o.status==='COURIER_ASSIGNED'?[here,[o.restLat,o.restLon],[o.dropLat,o.dropLon]]:o.status==='PICKED_UP'?[here,[o.dropLat,o.dropLon]]:[];
+  const p=o.plan,R:LatLon=[o.restLat,o.restLon],D:LatLon=[o.dropLat,o.dropLon];
+  const ahead:LatLon[]=!here?[]:o.status==='COURIER_ASSIGNED'?(p?[...rest(p.toRestaurant,here),...p.toCustomer.slice(1)]:[here,R,D])
+    :o.status==='PICKED_UP'?(p?rest(p.toCustomer,here):[here,D]):[];
   return past.length>1||ahead.length?{past,ahead}:null;
 }
 /** fit: frame the points shown (order tracker, courier screen) and follow them as the courier moves, until the user
@@ -284,7 +299,8 @@ function Courier(){
   const run=async(f:()=>Promise<any>)=>{try{setMsg('');await f();reload()}catch(e:any){setMsg(e.message)}};
   if(!d)return <div className="card">Loading…</div>;
   const o=d.order,start={lat:13.7314,lon:100.5414};
-  const goTo=(lat:number,lon:number)=>run(()=>api('/courier/location',{body:{lat,lon}}));
+  // Riding by hand jumps to the place, reporting the planned streets on the way so the trail follows them.
+  const goTo=(lat:number,lon:number,path?:LatLon[])=>run(()=>api('/courier/location',{body:{lat,lon,via:path&&d.position?rest(path,[d.position.lat,d.position.lon]).slice(1,-1):[]}}));
   return <>
     <div className="tiles"><Tile label="Status" value={d.order?'On a delivery':d.online?'Online, free':'Offline'} hint={d.inFreeSet?'in the Redis free set: dispatch can pick you':'not in the free set'}/>
       <Tile label="Delivered" value={d.delivered}/></div>
@@ -295,8 +311,8 @@ function Courier(){
       {d.online&&!o&&<p className="muted">Waiting for an order. Dispatch gives each order to the nearest free courier, so you compete with the simulated couriers: an admin can set them to 0 on the live map.</p>}
       {o&&<div className="job"><h3>{o.status==='COURIER_ASSIGNED'?'Pick up at':'Deliver to'} {o.status==='COURIER_ASSIGNED'?`${o.restaurant} (${o.restArea})`:o.address}</h3>
         <p className="muted">{o.items.map((i:any)=>`${i.qty}× ${i.name}`).join(', ')} · {o.readyAt?'food is ready':'kitchen is still cooking'}</p>
-        <div className="row">{o.status==='COURIER_ASSIGNED'?<><button onClick={()=>goTo(o.restLat,o.restLon)}>Ride to the restaurant</button><button className="primary" onClick={()=>run(()=>api(`/courier/orders/${o.id}/pickup`,{body:{}}))}>Picked up</button></>
-          :<><button onClick={()=>goTo(o.dropLat,o.dropLon)}>Ride to the customer</button><button className="primary" onClick={()=>run(()=>api(`/courier/orders/${o.id}/deliver`,{body:{}}))}>Delivered</button></>}</div>
+        <div className="row">{o.status==='COURIER_ASSIGNED'?<><button onClick={()=>goTo(o.restLat,o.restLon,o.plan?.toRestaurant)}>Ride to the restaurant</button><button className="primary" onClick={()=>run(()=>api(`/courier/orders/${o.id}/pickup`,{body:{}}))}>Picked up</button></>
+          :<><button onClick={()=>goTo(o.dropLat,o.dropLon,o.plan?.toCustomer)}>Ride to the customer</button><button className="primary" onClick={()=>run(()=>api(`/courier/orders/${o.id}/deliver`,{body:{}}))}>Delivered</button></>}</div>
         <p className="muted small">Pick-up and delivery are refused unless you are within 150 m (your position is in Redis GEO).</p></div>}
     </div>
     {d.position&&<div className="card"><CityMap fit route={o?courierRoute(o,d.position):null} restaurants={o?[{id:'r',name:o.restaurant,lat:o.restLat,lon:o.restLon}]:[]} drops={o?[{lat:o.dropLat,lon:o.dropLon,label:o.address}]:[]}

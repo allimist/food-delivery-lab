@@ -4,14 +4,15 @@ import crypto from 'crypto';
 import { pool, redis, stats, sleep, TIME_SCALE, DISPATCH_TIMEOUT_S } from './ctx';
 import { placeOrder, probe, TERMINAL, reconcileCouriers } from './saga';
 import * as couriers from './dispatch';
+import { onRoad } from './roads';
 
 const MAX_WAIT_S = 300;
 let running: string | null = null;
 
-/** Random point 1-4 km from a restaurant. */
+/** Random point 1-4 km from a restaurant, moved onto the nearest street (the customer's door). */
 function dropNear(lat: number, lon: number) {
   const km = 1 + Math.random() * 3, angle = Math.random() * 2 * Math.PI;
-  return { lat: lat + km * Math.cos(angle) / 111, lon: lon + km * Math.sin(angle) / (111 * Math.cos(lat * Math.PI / 180)) };
+  return onRoad(lat + km * Math.cos(angle) / 111, lon + km * Math.sin(angle) / (111 * Math.cos(lat * Math.PI / 180)));
 }
 
 async function loadCustomers(n: number) {

@@ -19,6 +19,7 @@ A hands-on learning project that rebuilds the core of a food delivery app (think
 - an **ETA** that learns each kitchen's real prep time
 - a **load simulator** with 40 simulated couriers riding through the public API, which shows where the time goes
 - a **live map** on real Bangkok streets (Leaflet + OpenStreetMap tiles, no API key): zoom from the whole region down to a street, and the order tracker follows its courier and draws its route: ridden so far in dark green, still to ride in light green
+- **street routing**: couriers ride real roads, using A* over 13k junctions of Bangkok's main roads taken from OpenStreetMap and shipped with the API (180 KB). The ETA uses road distance, not distance as the crow flies
 
 It is the sister project of [hotel-booking-lab](https://github.com/allimist/hotel-booking-lab) and [flight-booking-lab](https://github.com/allimist/flight-booking-lab), with the same stack and conventions. Everything runs locally with Docker Compose or Podman Compose. Nothing is production-ready on purpose: passwords are plain text and shown on the login page so anyone can try every role.
 
@@ -91,12 +92,14 @@ couriers:pos      GEO set   last position of every courier
 couriers:free     GEO set   online and carrying nothing; the only set dispatch searches
 courier:order:ID  string    the order a courier carries
 order:trail:ID    list      where the courier has been while carrying the order (for the map only)
+order:plan:ID     string    the streets it will take to the restaurant and to the customer (JSON)
 ```
 
 - **Claim** is one Lua script: `GEOSEARCH couriers:free … ASC COUNT 1`, `ZREM` the courier, set its order key. Two orders racing for the same courier run one after the other; the second no longer finds it.
 - **Position pings are a Lua script too.** The courier goes back into `couriers:free` only if it is online *and* has no order key. A plain "read state, then GEOADD" would let a ping that read "free" just before a claim put the courier back, and the courier would get a second order.
 - **The search widens while an order waits**: 3 km, then 6 km after 10 s, then 12 km after 20 s.
 - **PostgreSQL has the final say.** A partial unique index `one_active_order_per_courier ON orders(courier_id) WHERE status IN ('COURIER_ASSIGNED','PICKED_UP')` refuses a second active order. If Redis were ever wrong, the step fails and the claim is undone.
+- **Couriers ride the streets.** When a courier is assigned, the API plans its ride along the roads (`roads.ts`, A* over OpenStreetMap main roads): to the restaurant, then to the customer. The courier app follows that plan and, with each ping, sends the corners it turned since the last one, so the trail follows the streets too. A door off the main roads is reached in a straight line from the nearest point on a road. One-way streets are ignored (it's a scooter). `node scripts/build-roads.mjs` rebuilds the road file from OpenStreetMap.
 - **Redis can be rebuilt.** On start (and from the admin button) the API makes Redis agree with PostgreSQL about who carries what. The admin's consistency check compares the two.
 
 ### ETA that learns
@@ -141,19 +144,21 @@ Same pattern as the other labs: events are rows in `outbox_events`, written in t
 apps/api/src/
   server.ts      routes and roles
   saga.ts        saga steps, compensations, fake gateway, ETA, saga loop, outbox publisher
-  dispatch.ts    Redis keys and Lua scripts: claim, ping, release, prep-time average, reconcile
+  dispatch.ts    Redis keys and Lua scripts: claim, ping, release, prep-time average, reconcile, the courier's planned ride
+  roads.ts       street routing: A* over the road network in apps/api/data/roads.json
   sim.ts         load simulator and the Redis/PostgreSQL consistency check
   ctx.ts         clients, settings, helpers
 apps/courier-sim/src/worker.ts   40 couriers using the public API like a phone app would
 apps/web/src/main.tsx            React SPA: customer, restaurant, courier, admin, Leaflet map on OpenStreetMap tiles
 database/init.sql                schema + Bangkok seed (8 restaurants, 26 dishes, 52 accounts)
 scripts/smoke.sh                 end-to-end test, run in CI
+scripts/build-roads.mjs          downloads Bangkok's main roads from OpenStreetMap into apps/api/data/roads.json
 ```
 
 ## Not in scope (on purpose)
 
-Real auth (passwords are plain text), a real payment provider, street routing (couriers ride in straight lines across the map), batching two orders on one courier, surge pricing, multiple cities.
+Real auth (passwords are plain text), a real payment provider, traffic and one-way streets in routing, side streets (only main roads are in the road file), batching two orders on one courier, surge pricing, multiple cities.
 
 ## License
 
-MIT
+MIT. The road data in `apps/api/data/roads.json` is © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the ODbL.

@@ -5,12 +5,14 @@
 //   couriers:online   SET      who is online
 //   courier:order:ID  STRING   the order a courier is carrying
 //   order:trail:ID    LIST     where the courier has been while carrying that order, "lon,lat" per ping (for the map only)
+//   order:plan:ID     STRING   the roads it will take to the restaurant and to the customer (JSON; remade if lost)
 //
 // The invariant is "in couriers:free  <=>  online and no courier:order key". Every write that touches more than one
 // of these keys is a Lua script, so it runs as one step and nothing can run in between. The race this prevents: a
 // position update reads "free", dispatch claims the courier, then the update writes the courier back into the free set,
 // and the courier gets a second order.
 import { redis } from './ctx';
+import * as roads from './roads';
 
 const POS = 'couriers:pos', FREE = 'couriers:free', ONLINE = 'couriers:online';
 const orderKey = (courierId: string) => `courier:order:${courierId}`;
@@ -26,17 +28,20 @@ redis.call('SET', ARGV[5] .. id, ARGV[4])
 return {id, hits[1][2]}`;
 
 // Position ping. The courier goes (back) into the free set only if it is online and carries nothing.
-// A courier carrying an order also extends that order's trail (skipping repeats while it waits at the restaurant).
+// A courier carrying an order also extends that order's trail: the corners it turned since the last ping (ARGV[5..],
+// so the trail follows the streets), then where it is now; repeats are skipped while it waits at the restaurant.
 const PING = `
 redis.call('GEOADD', KEYS[1], ARGV[1], ARGV[2], ARGV[3])
 local order = redis.call('GET', KEYS[4])
 if order then
-  local trail, pt = ARGV[4] .. order, ARGV[1] .. ',' .. ARGV[2]
-  if redis.call('LINDEX', trail, -1) ~= pt then
-    redis.call('RPUSH', trail, pt)
-    redis.call('LTRIM', trail, -2000, -1)
-    redis.call('EXPIRE', trail, 86400)
+  local trail = ARGV[4] .. order
+  local last = redis.call('LINDEX', trail, -1)
+  for i = 5, #ARGV + 1 do
+    local pt = (i <= #ARGV) and ARGV[i] or (ARGV[1] .. ',' .. ARGV[2])
+    if pt ~= last then redis.call('RPUSH', trail, pt); last = pt end
   end
+  redis.call('LTRIM', trail, -2000, -1)
+  redis.call('EXPIRE', trail, 86400)
 end
 if redis.call('SISMEMBER', KEYS[3], ARGV[3]) == 1 and not order then
   redis.call('GEOADD', KEYS[2], ARGV[1], ARGV[2], ARGV[3])
@@ -78,8 +83,9 @@ export async function claimNearest(lat: number, lon: number, radiusKm: number, o
   const res = await r.fdClaim(FREE, lon, lat, radiusKm, orderId, 'courier:order:');
   return res ? { courierId: res[0] as string, distanceKm: Number(res[1]) } : null;
 }
-export async function ping(courierId: string, lat: number, lon: number) {
-  return r.fdPing(POS, FREE, ONLINE, orderKey(courierId), lon, lat, courierId, TRAIL);
+/** via: corners passed since the last ping, [lat, lon], oldest first. */
+export async function ping(courierId: string, lat: number, lon: number, via: roads.LatLon[] = []) {
+  return r.fdPing(POS, FREE, ONLINE, orderKey(courierId), String(lon), String(lat), courierId, TRAIL, ...via.map(([la, lo]) => `${lo},${la}`));
 }
 const TRAIL = 'order:trail:';
 /** Where the courier has been while carrying the order, oldest first. Kept for a day after delivery. */
@@ -90,6 +96,23 @@ export async function trail(orderId: string): Promise<[number, number][]> {
 export async function startTrail(orderId: string, courierId: string) {
   const p = await position(courierId);
   if (p) await redis.rpush(TRAIL + orderId, `${p.lon},${p.lat}`);
+}
+const PLAN = 'order:plan:';
+export type Plan = { toRestaurant: roads.LatLon[]; toCustomer: roads.LatLon[] };
+type PlanFor = { id: string; status: string; courierId: string; restLat: number; restLon: number; dropLat: number; dropLon: number };
+/** The roads the courier takes for this order. Made when the courier is assigned, from where it was; if Redis lost it,
+ *  made again from where it is now (before pick-up: to the restaurant, then to the customer; after: to the customer). */
+export async function plan(o: PlanFor): Promise<Plan | null> {
+  if (!['COURIER_ASSIGNED', 'PICKED_UP'].includes(o.status)) return null;
+  const saved = await redis.get(PLAN + o.id);
+  if (saved) return JSON.parse(saved);
+  const p = await position(o.courierId);
+  if (!p) return null;
+  const made: Plan = o.status === 'COURIER_ASSIGNED'
+    ? { toRestaurant: roads.route(p.lat, p.lon, o.restLat, o.restLon), toCustomer: roads.route(o.restLat, o.restLon, o.dropLat, o.dropLon) }
+    : { toRestaurant: [], toCustomer: roads.route(p.lat, p.lon, o.dropLat, o.dropLon) };
+  await redis.set(PLAN + o.id, JSON.stringify(made), 'EX', 86400);
+  return made;
 }
 export async function goOnline(courierId: string, lat: number, lon: number) {
   await redis.sadd(ONLINE, courierId);

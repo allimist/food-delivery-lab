@@ -14,7 +14,7 @@ The README has the overview. This file lists the races the code is built around,
 | `restaurants`, `menu_items`, `users` | seed data; `users.is_sim` marks the 40 simulated couriers |
 | `simulation_runs` | load-simulator reports |
 
-Redis holds only what can be rebuilt: courier positions, the free set, each courier's current order, and prep-time averages. The one exception is each order's courier trail (`order:trail:ID`), which is only drawn on the map; losing it loses a line, not an order.
+Redis holds only what can be rebuilt: courier positions, the free set, each courier's current order, and prep-time averages. The one exception is each order's courier trail (`order:trail:ID`), which is only drawn on the map; losing it loses a line, not an order. The courier's planned ride (`order:plan:ID`) is remade from its current position if it is missing.
 
 ## Races and where they are handled
 

@@ -92,6 +92,7 @@ async function orderDetail(id: string) {
   o.payment = (await pool.query(`SELECT status, amount::float FROM payments WHERE order_id=$1`, [id])).rows[0] || null;
   o.courierPos = o.courierId && ['COURIER_ASSIGNED', 'PICKED_UP'].includes(o.status) ? await couriers.position(o.courierId) : null;
   o.trail = o.courierId ? await couriers.trail(o.id) : [];
+  o.plan = o.courierId ? await couriers.plan(o) : null;
   if (!saga.TERMINAL.includes(o.status)) {
     const raw = (await pool.query(`SELECT * FROM orders WHERE id=$1`, [id])).rows[0];
     const rest = (await pool.query(`SELECT * FROM restaurants WHERE id=$1`, [raw.restaurant_id])).rows[0];
@@ -166,10 +167,14 @@ app.post('/api/courier/offline', async (req: any) => {
   return couriers.courierState(u.id);
 });
 // High-frequency position pings go to Redis only (not PostgreSQL, not Kafka).
+// via: up to 300 corners, [lat, lon], passed since the last ping, so the order's trail follows the streets.
 app.post('/api/courier/location', async (req: any) => {
   const u = await auth(req, ['COURIER']);
   const p = latLon(req.body);
-  await couriers.ping(u.id, p.lat, p.lon);
+  const via = (Array.isArray(req.body.via) ? req.body.via.slice(0, 300) : []).map((v: any) => {
+    const q = latLon({ lat: v?.[0], lon: v?.[1] }); return [q.lat, q.lon] as [number, number];
+  });
+  await couriers.ping(u.id, p.lat, p.lon, via);
   return { ok: true };
 });
 
@@ -179,7 +184,7 @@ app.get('/api/courier/current', async (req: any) => {
   const o = (await pool.query(`SELECT ${ORDER_COLS}, r.lat AS "restLat", r.lon AS "restLon", r.area AS "restArea" ${ORDER_FROM}
     WHERE o.courier_id=$1 AND o.status IN ('COURIER_ASSIGNED','PICKED_UP')`, [u.id])).rows[0] || null;
   const position = await couriers.position(u.id);
-  if (o) o.trail = await couriers.trail(o.id);
+  if (o) { o.trail = await couriers.trail(o.id); o.plan = await couriers.plan(o); }
   const delivered = (await pool.query(`SELECT count(*)::int AS n FROM orders WHERE courier_id=$1 AND status='DELIVERED'`, [u.id])).rows[0].n;
   return { ...state, position, order: o, delivered };
 });
