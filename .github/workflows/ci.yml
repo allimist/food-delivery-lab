@@ -16,7 +16,7 @@ jobs:
       run:
         working-directory: apps/${{ matrix.app }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -34,7 +34,7 @@ jobs:
     env:
       DISPATCH_TIMEOUT_S: 30   # keeps the "no courier" path short
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start the stack
         run: docker compose up -d --build postgres redis kafka api courier-sim
       - name: Smoke test
