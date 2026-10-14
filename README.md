@@ -27,7 +27,7 @@ It is the sister project of [hotel-booking-lab](https://github.com/allimist/hote
 
 ```bash
 docker compose up -d --build        # or: podman compose up -d --build
-open http://localhost:5175          # web
+open http://localhost:5175          # web (port taken? WEB_PORT=5185 docker compose up -d)
 ./scripts/smoke.sh                  # end-to-end test of every saga path
 ```
 

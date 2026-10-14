@@ -1,6 +1,6 @@
 # Project name fixes container/volume names regardless of the folder name.
 # Host ports are offset from the other labs (hotel 3010/5173/5433/6379/8080, flight 3020/5174/5435/6380/8081,
-# dating 3050/5177/5437) so they can all run side by side.
+# dating 3050/5177/5437) so they can all run side by side. WEB_PORT and API_PORT move the two you open in a browser.
 name: food-delivery-lab
 
 services:
@@ -83,14 +83,14 @@ services:
       kafka:
         condition: service_started   # the outbox holds events until Kafka is reachable
     ports:
-      - "3030:3030"
+      - "${API_PORT:-3030}:3030"
     environment:
       PORT: 3030
       DATABASE_URL: postgresql://food:food@postgres:5432/food
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:9092
       JWT_SECRET: local-learning-secret
-      CORS_ORIGIN: http://localhost:5175
+      CORS_ORIGIN: http://localhost:${WEB_PORT:-5175}
       KAFKAJS_NO_PARTITIONER_WARNING: "1"
       TIME_SCALE: ${TIME_SCALE:-20}
       COURIER_KMH: 25
@@ -113,9 +113,9 @@ services:
     depends_on:
       - api
     ports:
-      - "5175:5175"
+      - "${WEB_PORT:-5175}:5175"
     environment:
-      VITE_API_URL: http://localhost:3030/api
+      VITE_API_URL: http://localhost:${API_PORT:-3030}/api
       VITE_KAFKA_UI_URL: http://localhost:8082
       VITE_POSTGRES: "localhost:5436 (user/db/password: food)"
       VITE_REDIS: redis://localhost:6381

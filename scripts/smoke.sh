@@ -3,7 +3,7 @@
 # Drives every saga path: delivered, card declined, restaurant rejects, customer cancels, no courier, plus idempotency.
 #   API=http://localhost:3030/api ./scripts/smoke.sh
 set -euo pipefail
-API=${API:-http://localhost:3030/api}
+API=${API:-http://localhost:${API_PORT:-3030}/api}
 step() { echo "▶ $*"; }
 ok() { echo "  ✓ $*"; }
 fail() { echo "  ✕ $*" >&2; exit 1; }
