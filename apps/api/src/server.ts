@@ -98,6 +98,7 @@ async function orderDetail(id: string) {
     const rest = (await pool.query(`SELECT * FROM restaurants WHERE id=$1`, [raw.restaurant_id])).rows[0];
     o.etaLive = await saga.estimate(raw, rest);
   }
+  o.serverTime = new Date();   // the tracker counts down on this clock, not the browser's
   return o;
 }
 

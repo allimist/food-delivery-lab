@@ -159,19 +159,20 @@ function stepNote(s:any){const d=s.detail||{};
   return [d.reason,d.compensation].filter(Boolean).join(' · ');
 }
 function Tracker({id,onClose,note}:{id:string,onClose?:()=>void,note?:string}){
-  const [o,reload]=usePoll(()=>api('/orders/'+id),1000,[id]);
+  // skew: server clock minus browser clock. ETAs are server times; a container VM's clock can drift (after sleep).
+  const [o,reload]=usePoll(()=>api('/orders/'+id).then(o=>({...o,skew:o.serverTime?Date.parse(o.serverTime)-Date.now():0})),1000,[id]);
   const now=useNow();
   const [msg,setMsg]=useState('');
   if(!o)return <div className="card">Loading…</div>;
   const done=new Map(o.steps.map((s:any)=>[s.status,s]));
   const failed=o.steps.find((s:any)=>FAILED.includes(s.status));
-  const eta=o.etaLive||o.etaAt;
+  const eta=o.etaLive||o.etaAt,left=(new Date(eta).getTime()-now-o.skew)/1000;   // seconds, on the server's clock
   const cancel=async()=>{try{await api(`/orders/${id}/cancel`,{body:{}});reload()}catch(e:any){setMsg(e.message)}};
   return <div className="card tracker">
     <div className="row between"><h2>{o.restaurant} <small>#{o.id.slice(0,8)}</small></h2>{onClose&&<button onClick={onClose}>Close</button>}</div>
     <div className="row">
       <Pill s={o.status}/>
-      {!TERMINAL.includes(o.status)&&eta&&<span className="eta">Arrives in <b>{secs((new Date(eta).getTime()-now)/1000)}</b> <small>at {time(eta)} · quoted {time(o.etaQuotedAt)}</small></span>}
+      {!TERMINAL.includes(o.status)&&eta&&<span className="eta">Arrives {left<1?<b>any moment</b>:<>in <b>{secs(left)}</b></>} <small>at {time(eta)} · quoted {time(o.etaQuotedAt)}</small></span>}
       {o.status==='DELIVERED'&&<span className="eta">Delivered at {time(o.deliveredAt)} <small>quoted {time(o.etaQuotedAt)}</small></span>}
       {o.payment&&<span className="muted">Payment: <b>{o.payment.status.toLowerCase()}</b> {baht(o.payment.amount)}</span>}
       {o.status==='PAYMENT_AUTHORIZED'&&<button className="danger" onClick={cancel}>Cancel order</button>}
