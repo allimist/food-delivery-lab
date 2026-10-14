@@ -118,7 +118,7 @@ function CityMap({restaurants,couriers=[],orders=[],drops=[],fit,route}:MapProps
     // restaurants, routes and drop-offs change rarely: rebuild them only when they do
     const key=JSON.stringify([restaurants.map(r=>r.id),orders.map(o=>[o.id,o.status]),drops]);
     if(key!==s.key){s.key=key;s.shapes.clearLayers();
-      for(const o of orders){L.polyline([[o.restLat,o.restLon],[o.dropLat,o.dropLon]],{className:"route",weight:2,dashArray:"5 5",interactive:false}).addTo(s.shapes);
+      for(const o of orders){L.polyline(o.road||[[o.restLat,o.restLon],[o.dropLat,o.dropLon]],{className:"route",weight:2,dashArray:"5 5",interactive:false}).addTo(s.shapes);
         L.circleMarker([o.dropLat,o.dropLon],{className:'drop',radius:5,weight:2,fillOpacity:1}).bindTooltip(`Drop-off · ${LABEL[o.status]}`).addTo(s.shapes)}
       for(const d of drops)L.circleMarker([d.lat,d.lon],{className:'drop',radius:7,weight:2,fillOpacity:1})
         .bindTooltip(d.label,{permanent:true,direction:'right',offset:[8,0],className:'map-tip'}).addTo(s.shapes);

@@ -221,6 +221,8 @@ app.get('/api/admin/map', async (req: any) => {
         o.ready_at IS NOT NULL AS ready
       FROM orders o JOIN restaurants r ON r.id=o.restaurant_id WHERE o.status IN ('PLACED','PAYMENT_AUTHORIZED','RESTAURANT_ACCEPTED','COURIER_ASSIGNED','PICKED_UP')`),
     couriers.allCouriers()]);
+  // Orders with a courier carry their planned road from the restaurant to the customer (the others: none yet).
+  await Promise.all(orders.rows.map(async o => { if (o.courierId) o.road = (await couriers.plan(o))?.toCustomer; }));
   return { restaurants: rests.rows, orders: orders.rows, couriers: list.filter(c => c.online || c.orderId) };
 });
 
