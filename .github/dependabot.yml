@@ -1,0 +1,11 @@
+# Monthly dependency updates, grouped so each app gets one pull request instead of one per package.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories: [/apps/api, /apps/courier-sim, /apps/web]
+    schedule: { interval: monthly }
+    groups:
+      all: { patterns: ["*"] }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
