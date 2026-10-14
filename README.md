@@ -8,7 +8,7 @@
 ![Runs on](https://img.shields.io/badge/runs%20on-Docker%20%7C%20Podman-892ca0)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![Live map on OpenStreetMap during a load test: 60 orders, 25 couriers, routes from restaurants to drop-offs](docs/live-map.jpg)
+![Live map on OpenStreetMap during a load test: 60 orders, 25 couriers, assigned orders drawn along their roads](docs/live-map.jpg)
 
 A hands-on learning project that rebuilds the core of a food delivery app (think DoorDash / Grab Food / LINE MAN) for central **Bangkok**. It is small enough to read in an afternoon but keeps the hard parts:
 
