@@ -5,7 +5,7 @@ name: food-delivery-lab
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: public.ecr.aws/docker/library/postgres:16-alpine   # official image via the AWS mirror: no Docker Hub pull limit
     environment:
       POSTGRES_USER: food
       POSTGRES_PASSWORD: food
@@ -22,7 +22,7 @@ services:
       retries: 12
 
   redis:
-    image: redis:7-alpine
+    image: public.ecr.aws/docker/library/redis:7-alpine
     command: ["redis-server", "--maxmemory", "${REDIS_MAXMEMORY:-200mb}", "--maxmemory-policy", "noeviction"]
     ports:
       - "6381:6379"
