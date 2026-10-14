@@ -19,12 +19,7 @@ export const kmPerSecond = () => COURIER_KMH * TIME_SCALE / 3600;
 
 export const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371, rad = Math.PI / 180;
-  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
+export { haversineKm } from './geo';
 
 export async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   const c = await pool.connect();

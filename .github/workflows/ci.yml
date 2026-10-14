@@ -7,7 +7,7 @@ on:
 
 jobs:
   typecheck:
-    name: Typecheck and build
+    name: Typecheck, test and build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -24,6 +24,7 @@ jobs:
           cache-dependency-path: apps/${{ matrix.app }}/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test --if-present
       - run: npm run build
 
   smoke:

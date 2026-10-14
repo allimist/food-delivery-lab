@@ -3,7 +3,7 @@
 // [from, where it joins the road, ...junctions, where it leaves the road, to]. A* over about 13k junctions takes a few ms.
 import fs from 'fs';
 import path from 'path';
-import { haversineKm } from './ctx';
+import { haversineKm } from './geo';
 
 export type LatLon = [number, number];
 
